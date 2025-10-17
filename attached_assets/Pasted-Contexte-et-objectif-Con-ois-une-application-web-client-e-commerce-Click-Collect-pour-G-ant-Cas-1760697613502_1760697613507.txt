@@ -1,0 +1,170 @@
+Contexte et objectif
+
+Conçois une application web client e-commerce “Click & Collect” pour Géant Casino Brazzaville, permettant de:
+Parcourir un catalogue par catégories avec recherche avancée et suggestions.
+Gérer un panier, créer un compte / se connecter, passer commande avec choix de créneau de retrait.
+Payer en ligne (Mobile Money et carte), recevoir confirmation avec code de retrait temporaire, puis final.
+Afficher politiques de retrait/expiration (24h périssables, 48h non périssables, commande annulée sans remboursement une fois expirée), de manière très visible sur landing/checkout/récap.
+Le frontend client est distinct de l’interface staff et ne doit jamais exposer d’actions staff (RBAC strict côté backend et côté UI).
+Périmètre fonctionnel (côté client)
+
+Catalogue:
+Page d’accueil avec catégories visuelles, promotions, recherche globale.
+Page de catégorie listant produits filtrables (prix, popularité, nouveautés) et paginés.
+Page produit avec images, description, prix, stock, notes moyennes et avis, bouton “Ajouter au panier”, favoris.
+Recherche:
+Barre de recherche avec suggestions instantanées (typeahead).
+Panier et commande:
+Panier persistant (invité et connecté), modification quantité, suppression, total dynamique, validation des stocks côté API.
+Checkout en 3 étapes: Informations client -> Créneau de retrait -> Paiement.
+Créneaux: liste de plages horaires disponibles retournées par l’API.
+Authentification:
+Inscription (username, email, mot de passe), Connexion, Déconnexion, Profil (modifier username).
+Gestion de session robuste avec refresh token silencieux, pas de bascule vers rôle staff.
+Paiement:
+Démarrage du paiement (Mobile Money Airtel/MTN + Carte), redirection/SDK/QR selon fournisseur.
+Écoute de l’état de la transaction (retour front + webhook backend) et affichage du résultat.
+Confirmation et codes:
+Après paiement validé, affichage du récapitulatif avec numéro de commande et code temporaire; envoi email/SMS par backend.
+Information claire sur politique d’expiration/rétractation.
+Favoris et avis:
+Ajouter/retirer favoris (auth requis).
+Donner une note + commentaire (auth requis), gérer erreurs/états vides.
+Technologies et architecture
+
+Framework: React + TypeScript. Préférence: Next.js (App Router) pour SSR/SEO, ou Vite + React Router si SSR non requis.
+State & data:
+React Query (TanStack Query) pour fetching/caching invalideur.
+Zustand ou Redux Toolkit pour panier et préférences UI si nécessaire.
+UI:
+Tailwind CSS + Headless UI/Radix UI, responsive-first, accessibilité (ARIA), dark mode optionnel.
+Internationalisation:
+i18next/next-intl (fr par défaut).
+Qualité:
+ESLint + Prettier, tests unitaires (Vitest/Jest), tests e2e (Playwright/Cypress).
+Observabilité:
+Sentry (erreurs) + simple analytics.
+Sécurité:
+OWASP ASVS côté front (XSS, CSRF via cookies same-site Lax/Strict si applicable, validation stricte inputs).
+Contrat d’API attendu (à aligner avec le backend Django)
+Base: /api
+
+Auth
+
+POST /auth/register {username, email, password} -> 201 {id, username, email}
+POST /auth/login {email|username, password} -> 200 {access, refresh, user:{id, username, email}}
+POST /auth/refresh {refresh} -> 200 {access}
+POST /auth/logout -> 204
+GET /auth/me -> 200 {id, username, email} Notes:
+Tokens JWT (access ~15min, refresh ~7-30j). Refresh silencieux côté front.
+RBAC: les rôles staff ne sont pas exposés aux clients; un client ne peut jamais devenir staff.
+Catalogue et catégories
+
+GET /categories -> 200 [{id, name, imageUrl, slug, productCount}]
+GET /products?search=&category=&sort=&page=&page_size= -> 200 {results:[{id, name, description, price, images:[url], stock, sku, categoryId, ratingAverage, ratingCount, isActive}], count, next, previous}
+GET /products/{id} -> 200 {id, name, description, price, images, stock, sku, category, attributes, ratingAverage, ratingCount}
+GET /products/suggest?q= -> 200 [{id, name, thumbUrl}]
+Favoris et avis
+
+GET /favorites -> 200 [{productId, addedAt}]
+POST /favorites/{productId} -> 201
+DELETE /favorites/{productId} -> 204
+POST /products/{id}/ratings {rating:1..5, comment?} -> 201 {id, productId, rating, comment, createdAt}
+GET /products/{id}/ratings?page= -> 200 {results:[...], count}
+Panier
+Option serveur recommandé (sinon fallback localStorage):
+
+GET /cart -> 200 {items:[{productId, name, price, quantity, imageUrl, subtotal}], total, currency}
+POST /cart/items {productId, quantity} -> 201
+PATCH /cart/items/{productId} {quantity} -> 200
+DELETE /cart/items/{productId} -> 204 Notes: Valider le stock à chaque mutation.
+Créneaux de retrait
+
+GET /pickup-slots?date=YYYY-MM-DD -> 200 [{id, date, from, to, capacity, remaining}]
+Commande et paiement
+
+POST /orders Body: { customer:{fullName, phone, email?}, pickupSlotId, items:[{productId, quantity}], paymentMethod: "momo|card", notes? } Réponses:
+201 { id, orderNumber, status:"pending_payment|paid|preparing|ready|picked_up|cancelled_expired", amount, currency, pickupSlot:{...}, payment:{provider, paymentUrl|sdkPayload}, tempPickupCode, // généré après paiement validé selon backend createdAt }
+GET /orders/{id} -> 200 {...}
+POST /payments/initiate {orderId, method} -> 200 {paymentUrl|sdkPayload}
+Webhooks backend: le front affiche l’état et rafraîchit /orders/{id}.
+Politique d’expiration: surfaces UI + GET /config/policy pour textes.
+Notifications
+
+Le backend envoie email/SMS (pas implémenté côté front). Le front affiche seulement confirmations.
+Gestion des erreurs et states
+
+États de chargement/squelette, empty states (recherche vide, catégorie vide, aucun favori), erreurs (réseau, validation, paiement refusé), messages de stock insuffisant et indisponibilité.
+Composants UI clés
+
+Layout: Header (logo, recherche, lien panier, login), Banner partenaires (opacité réduite), Footer (mentions).
+Home: Hero + CTA “Commencer mes courses en ligne”, catégories, promos.
+Catalogue: CategoryGrid, ProductList, Facets, Pagination.
+Produit: ProductGallery, PriceBlock, StockBadge, RatingSummary, ReviewList, AddToCart.
+Panier: CartDrawer/Page, CartItemRow, TotalSummary, CheckoutCTA.
+Checkout: Stepper (Infos -> Créneau -> Paiement), FormInfo, SlotPicker, PaymentButtons (Mobile Money, Carte), PolicyNotice.
+Confirmation: OrderSummary, CodesDisplay (temporaire et rappel final), PolicyHighlight.
+Utilitaires: Toasts, Modals, EmptyStates, Skeletons.
+Règles UX/Contenu
+
+Politique d’expiration affichée clairement:
+“Après validation de commande: 24h max pour produits périssables, 48h pour non périssables. Passé ce délai, commande annulée et remise en rayon, sans remboursement (commande expirée).”
+Afficher sur: landing, checkout (avant paiement), récap commande.
+Recherche: suggestions et correction basique (trim, accent-insensitive côté front, server-side si dispo).
+Accessibilité: navigation clavier, focus ring, labels ARIA, contrastes, erreurs formulaires lisibles.
+Gestion de session
+
+Stockage: access token en mémoire + refresh token cookie httpOnly SameSite Lax/Strict si backend le propose; sinon fallback localStorage avec rotation et invalidation.
+Auto-refresh silencieux avant expiration; re-try d’appel échoué une fois sur 401.
+Environnements et configuration (.env)
+
+NEXT_PUBLIC_API_BASE_URL=https://…/api
+NEXT_PUBLIC_PAYMENT_PROVIDER=“momo|card|both”
+NEXT_PUBLIC_BRAND_NAME=“Géant Casino”
+NEXT_PUBLIC_POLICY_URLS=…
+SENTRY_DSN=…
+Feature flags: NEXT_PUBLIC_ENABLE_SUGGESTIONS=true
+Tests et qualité
+
+Tests unitaires composants critiques (panier, checkout stepper, PaymentButtons).
+Tests e2e pour parcours: recherche -> ajout panier -> checkout -> paiement simulé -> confirmation.
+Ajustements backend requis si non conformes (à transmettre à l’équipe backend Django)
+
+Auth/Session:
+Implémenter JWT (SimpleJWT) avec /auth/login, /auth/refresh, /auth/me, durée session suffisante (access ~15min, refresh >=7j), CORS configuré.
+Interdire toute promotion client -> staff côté API; seuls admins peuvent gérer rôles via interface staff séparée.
+Modèles et endpoints:
+Categories: image obligatoire; exposer /categories avec imageUrl, slug.
+Products: exposer images[], stock, ratingAverage/ratingCount; filtres/pagination; /products/suggest.
+Favorites: endpoints GET/POST/DELETE.
+Ratings: POST /products/{id}/ratings avec validation (1..5), GET paginé.
+Cart serveur: endpoints GET/POST/PATCH/DELETE avec contrôle stock.
+Pickup slots: GET /pickup-slots avec capacity/remaining.
+Orders: POST /orders validant stock et réservant quantités, statuts: pending_payment -> paid -> preparing -> ready -> picked_up -> cancelled_expired.
+Codes: génération code temporaire après paiement validé; génération code final lors de la vérification au comptoir; invalidation après retrait.
+Expiration: job planifié/cron pour annuler commandes non retirées (24h périssable/48h non périssable) et remettre en rayon; déclenchement notifications.
+Paiement: /payments/initiate et webhooks pour Momo/Carte; sécurité signature; idempotence.
+Config: /config/policy pour exposer textes légaux (expiration/annulation).
+Données/Images:
+Les URLs d’images produits doivent être absolues et accessibles publiquement (media storage S3/Cloudinary/MinIO).
+Ingestion Kaggle optionnelle: script d’import initial, champs mappés au schéma produit.
+Performance:
+Pagination partout, tri, filtres indexés; rate limiting sur auth/recherche; ETags/Cache-Control sur GET publics.
+Livrables attendus côté front
+
+Code complet du frontend client (Next.js/React) structuré par pages et features, intégrant:
+Pages: /, /categories/[slug], /produits/[id], /panier, /checkout, /confirmation/[orderId], /compte.
+Services API typés (TypeScript), hooks React Query, gestion d’auth, garde de routes.
+Composants listés ci-dessus, styles Tailwind, tests clés.
+Contenu landing avec CTA et politique d’expiration très visible.
+Critères d’acceptation
+
+Catalogue navigable, recherche avec suggestions, catégories redirigeant vers pages dédiées.
+Panier persistant avec validation stock; résumé panier détaillé (nom, quantité, prix).
+Notation produit fonctionnelle; favoris OK.
+Checkout en 3 étapes + paiement; confirmation avec codes; affichage des politiques.
+Sessions stables, refresh silencieux; UX mobile-first; performances Web Vitals bonnes.
+Résumé des dépendances externes
+
+Mobile Money (Airtel/MTN) et Carte (Visa/Mastercard) via provider abstrait; prévoir modes “test/sandbox”.
+Sentry, Analytics léger.
