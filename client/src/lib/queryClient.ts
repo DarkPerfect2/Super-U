@@ -21,12 +21,19 @@ function getAuthHeaders(): HeadersInit {
   return headers;
 }
 
+const API_BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
+export function toApiUrl(pathOrUrl: string): string {
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  const path = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+  return `${API_BASE}${path}`;
+}
+
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
 ): Promise<any> {
-  const res = await fetch(url, {
+  const res = await fetch(toApiUrl(url), {
     method,
     headers: getAuthHeaders(),
     body: data ? JSON.stringify(data) : undefined,
@@ -55,7 +62,7 @@ export const getQueryFn: <T>(options: {
       headers["Authorization"] = `Bearer ${token}`;
     }
     
-    const res = await fetch(queryKey.join("/") as string, {
+    const res = await fetch(toApiUrl(queryKey.join("/") as string), {
       headers,
       credentials: "include",
     });

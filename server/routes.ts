@@ -2,7 +2,8 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import bcrypt from "bcrypt";
 import { nanoid } from "nanoid";
-import { storage } from "./storage";
+import { storage as mongoStorage, IStorage } from "./storage";
+import { FallbackStorage } from "./storage-fallback";
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -15,19 +16,28 @@ import { insertUserSchema, insertRatingSchema, loginSchema } from "@shared/schem
 import { sendEmail, generatePasswordResetTemplate, generateOrderConfirmationTemplate, generateTwoFactorCodeTemplate, initializeEmailService } from "./services/email";
 import { sendSMS, generatePasswordResetSMSMessage, generateTwoFactorSMSMessage, generateOrderConfirmationSMSMessage, initializeSMSService } from "./services/sms";
 import { initializeCloudinaryService, getCloudinarySignature } from "./services/cloudinary";
+import { getCollections, getDatabase } from "./db";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Initialize services
   initializeEmailService();
   await initializeSMSService();
   initializeCloudinaryService();
 
-  // ==================== AUTH ROUTES ====================
+  let storage: IStorage;
+  const db = await getDatabase();
+
+  if (!db) {
+    console.log('⚠️ Using in-memory fallback storage (MongoDB not configured)');
+    storage = new FallbackStorage();
+  } else {
+    console.log('✅ Using MongoDB storage');
+    storage = mongoStorage;
+  }
+
   app.post("/api/auth/register", async (req: Request, res: Response) => {
     try {
       const validatedData = insertUserSchema.parse(req.body);
 
-      // Check existing user
       const existingUser = await storage.getUserByEmail(validatedData.email);
       if (existingUser) {
         return res.status(400).json({ error: "Email already registered" });
@@ -38,7 +48,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Username already taken" });
       }
 
-      // Hash password
       const hashedPassword = await bcrypt.hash(validatedData.password, 10);
 
       const user = await storage.createUser({
@@ -46,7 +55,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         password: hashedPassword,
       });
 
-      const { password: _, ...userWithoutPassword } = user;
+      const { password: _, ...userWithoutPassword } = user as any;
       res.status(201).json(userWithoutPassword);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Registration failed" });
@@ -57,7 +66,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { emailOrUsername, password } = loginSchema.parse(req.body);
 
-      // Find user by email or username
       let user = await storage.getUserByEmail(emailOrUsername);
       if (!user) {
         user = await storage.getUserByUsername(emailOrUsername);
@@ -67,8 +75,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
-      // Verify password
-      const isValidPassword = await bcrypt.compare(password, user.password);
+      const isValidPassword = await bcrypt.compare(password, (user as any).password);
       if (!isValidPassword) {
         return res.status(401).json({ error: "Invalid credentials" });
       }
@@ -76,7 +83,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const accessToken = generateAccessToken(user.id);
       const refreshToken = generateRefreshToken(user.id);
 
-      const { password: _, ...userWithoutPassword } = user;
+      const { password: _, ...userWithoutPassword } = user as any;
 
       res.json({
         access: accessToken,
@@ -109,7 +116,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/auth/logout", (req: Request, res: Response) => {
+  app.post("/api/auth/logout", (_req: Request, res: Response) => {
     res.status(204).send();
   });
 
@@ -119,23 +126,203 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/auth/me", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const { username } = req.body;
-      const updated = await storage.updateUser(req.user!.id, { username });
-      const { password: _, ...userWithoutPassword } = updated!;
+      const { username, email, phone, currentPassword, newPassword } = req.body;
+      const authUser = req.user!;
+
+      const updateData: any = {};
+
+      if (newPassword) {
+        if (!currentPassword) {
+          return res.status(400).json({ error: "Current password required to change password" });
+        }
+        const fullUser = await storage.getUser(authUser.id);
+        if (!fullUser) {
+          return res.status(401).json({ error: "User not found" });
+        }
+        const isValidPassword = await bcrypt.compare(currentPassword, (fullUser as any).password);
+        if (!isValidPassword) {
+          return res.status(401).json({ error: "Current password is incorrect" });
+        }
+        updateData.password = await bcrypt.hash(newPassword, 10);
+      }
+
+      if (username) updateData.username = username;
+      if (email) updateData.email = email;
+      if (phone) updateData.phone = phone;
+
+      const updated = await storage.updateUser(authUser.id, updateData);
+      const { password: _, ...userWithoutPassword } = updated as any;
       res.json(userWithoutPassword);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  // ==================== CATEGORIES ====================
-  app.get("/api/categories", async (req: Request, res: Response) => {
+  app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ error: "Email required" });
+      }
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.json({ message: "If email exists, reset link has been sent" });
+      }
+
+      const resetToken = nanoid(32);
+      const resetExpires = new Date(Date.now() + 3600000).toISOString();
+
+      await storage.updateUser(user.id, {
+        passwordResetToken: resetToken as any,
+        passwordResetExpires: resetExpires as any,
+      } as any);
+
+      const resetLink = `${process.env.FRONTEND_URL || 'http://localhost:5000'}/reset-password?token=${resetToken}`;
+      const emailTemplate = generatePasswordResetTemplate(resetLink, (user as any).username);
+
+      const sent = await sendEmail((user as any).email, 'Réinitialisation de votre mot de passe', emailTemplate);
+      if (sent) {
+        res.json({ message: "Reset link sent to email" });
+      } else {
+        res.status(500).json({ error: "Failed to send email" });
+      }
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req: Request, res: Response) => {
+    try {
+      const { token, newPassword } = req.body;
+
+      if (!token || !newPassword) {
+        return res.status(400).json({ error: "Token and new password required" });
+      }
+
+      if (newPassword.length < 8) {
+        return res.status(400).json({ error: "Password must be at least 8 characters" });
+      }
+
+      const { users } = await getCollections();
+      const user = await users.findOne({
+        passwordResetToken: token,
+        passwordResetExpires: { $gt: new Date().toISOString() },
+      });
+
+      if (!user) {
+        return res.status(401).json({ error: "Invalid or expired reset token" });
+      }
+
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+      await users.updateOne(
+        { _id: user._id },
+        {
+          $set: {
+            password: hashedPassword,
+            passwordResetToken: null,
+            passwordResetExpires: null,
+            updatedAt: new Date().toISOString(),
+          },
+        }
+      );
+
+      res.json({ message: "Password reset successfully" });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/auth/request-2fa", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const { method } = req.body;
+      const user = req.user!;
+
+      if (!method || !['email', 'sms'].includes(method)) {
+        return res.status(400).json({ error: "Method must be 'email' or 'sms'" });
+      }
+
+      const twoFactorCode = Math.random().toString().slice(2, 8);
+      const twoFactorExpires = new Date(Date.now() + 600000).toISOString();
+
+      await storage.updateUser(user.id, {
+        twoFactorCode: twoFactorCode as any,
+        twoFactorExpires: twoFactorExpires as any,
+      } as any);
+
+      if (method === 'email') {
+        const emailTemplate = generateTwoFactorCodeTemplate(twoFactorCode, user.username);
+        const sent = await sendEmail(user.email, 'Code de vérification Géant Casino', emailTemplate);
+        if (sent) {
+          return res.json({ message: "Code sent to email" });
+        }
+      } else if (method === 'sms') {
+        if (!(user as any).phone) {
+          return res.status(400).json({ error: "Phone number not set" });
+        }
+        const message = generateTwoFactorSMSMessage(twoFactorCode);
+        const sent = await sendSMS((user as any).phone, message);
+        if (sent) {
+          return res.json({ message: "Code sent via SMS" });
+        }
+      }
+
+      res.status(500).json({ error: "Failed to send code" });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/auth/verify-2fa", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const { code } = req.body;
+      const user = req.user!;
+
+      if (!code) {
+        return res.status(400).json({ error: "Code required" });
+      }
+
+      const fullUser = await storage.getUser(user.id);
+      if (!fullUser || (fullUser as any).twoFactorCode !== code) {
+        return res.status(401).json({ error: "Invalid code" });
+      }
+
+      const now = new Date();
+      const expiration = new Date(((fullUser as any).twoFactorExpires) || 0);
+      if (now > expiration) {
+        return res.status(401).json({ error: "Code expired" });
+      }
+
+      await storage.updateUser(user.id, {
+        twoFactorCode: undefined as any,
+        twoFactorExpires: undefined as any,
+      } as any);
+
+      res.json({ message: "Code verified successfully" });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/upload/cloudinary-signature", authMiddleware, async (_req: AuthRequest, res: Response) => {
+    try {
+      const signature = getCloudinarySignature();
+      if (!signature) {
+        return res.status(500).json({ error: "Cloudinary not configured" });
+      }
+      res.json(signature);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/categories", async (_req: Request, res: Response) => {
     const categories = await storage.getCategories();
     res.json(categories);
   });
 
-  // ==================== PRODUCTS ====================
-  // Products suggestion endpoint (must be before :id)
   app.get("/api/products/suggest", async (req: Request, res: Response) => {
     const { q } = req.query;
     if (!q || typeof q !== "string") {
@@ -146,10 +333,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(suggestions);
   });
 
-  // All products endpoint
   app.get("/api/products", async (req: Request, res: Response) => {
     try {
-      const { search, category, sort, page = "1", page_size = "20" } = req.query;
+      const { search, category, sort, page = "1", page_size = "20" } = req.query as any;
 
       let categoryId: string | undefined;
       if (category) {
@@ -180,7 +366,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Single product endpoint
   app.get("/api/products/:id", async (req: Request, res: Response) => {
     try {
       const product = await storage.getProductById(req.params.id);
@@ -194,7 +379,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ==================== FAVORITES ====================
   app.get("/api/favorites", authMiddleware, async (req: AuthRequest, res: Response) => {
     const favorites = await storage.getUserFavorites(req.user!.id);
     res.json(favorites);
@@ -214,7 +398,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(204).send();
   });
 
-  // ==================== RATINGS ====================
   app.get("/api/products/:id/ratings", async (req: Request, res: Response) => {
     const page = parseInt(req.query.page as string) || 1;
     const ratings = await storage.getProductRatings(req.params.id, page);
@@ -235,7 +418,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ==================== CART ====================
   app.get("/api/cart", optionalAuthMiddleware, async (req: AuthRequest, res: Response) => {
     let cartItems;
     if (req.user) {
@@ -247,11 +429,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const items = cartItems.map(item => ({
       productId: item.productId,
-      name: item.product.name,
-      price: item.product.price,
+      name: (item as any).product.name,
+      price: (item as any).product.price,
       quantity: item.quantity,
-      imageUrl: (item.product.images as string[])[0] || "",
-      subtotal: (parseFloat(item.product.price) * item.quantity).toFixed(2),
+      imageUrl: ((item as any).product.images as string[])[0] || "",
+      subtotal: (parseFloat((item as any).product.price) * item.quantity).toFixed(2),
     }));
 
     const total = items.reduce((sum, item) => sum + parseFloat(item.subtotal), 0).toFixed(2);
@@ -263,14 +445,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // ==================== PICKUP SLOTS ====================
   app.get("/api/pickup-slots", async (req: Request, res: Response) => {
-    const { date } = req.query;
+    const { date } = req.query as any;
     const slots = await storage.getPickupSlots(date as string);
     res.json(slots);
   });
 
-  // ==================== ORDERS ====================
   app.get("/api/orders", authMiddleware, async (req: AuthRequest, res: Response) => {
     const orders = await storage.getOrders(req.user!.id);
     res.json(orders);
@@ -292,9 +472,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
-      // Calculate total and create order items
       let totalAmount = 0;
-      const orderItems = [];
+      const orderItems: any[] = [];
 
       for (const item of requestItems) {
         const product = await storage.getProductById(item.productId);
@@ -314,13 +493,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Generate order number
       const orderNumber = `GC-${Date.now()}-${nanoid(6).toUpperCase()}`;
-
-      // Generate temporary pickup code
       const tempPickupCode = nanoid(8).toUpperCase();
 
-      // Calculate expiration (24h for perishable, 48h for non-perishable)
       const hasPerishable = requestItems.some((item: any) => item.product?.isPerishable);
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + (hasPerishable ? 24 : 48));
@@ -337,40 +512,107 @@ export async function registerRoutes(app: Express): Promise<Server> {
           currency: "XAF",
           paymentMethod,
           notes,
-          status: "paid", // Mock: automatically mark as paid
+          status: "paid",
           tempPickupCode,
           expiresAt,
-        },
+        } as any,
         orderItems
       );
 
-      // Update slot capacity
       const slot = await storage.getPickupSlotById(pickupSlotId);
       if (slot) {
         await storage.updateSlotCapacity(pickupSlotId, slot.remaining - 1);
       }
 
-      // Get full order with relations
       const fullOrder = await storage.getOrderById(order.id);
+
+      if (customerEmail || (req.user as any)?.email) {
+        const emailAddress = customerEmail || (req.user as any)?.email;
+        const itemsForEmail = orderItems.map(item => ({
+          productName: item.productName,
+          quantity: item.quantity,
+          price: parseFloat(item.productPrice),
+        }));
+        const pickupDateStr = (slot as any)?.date || new Date().toISOString().split('T')[0];
+        const pickupTimeStr = (slot as any)?.timeFrom ? `${(slot as any).timeFrom} - ${(slot as any).timeTo}` : "À définir";
+
+        const emailTemplate = generateOrderConfirmationTemplate(
+          orderNumber,
+          customerName,
+          itemsForEmail,
+          totalAmount,
+          tempPickupCode,
+          pickupDateStr,
+          pickupTimeStr
+        );
+
+        sendEmail(emailAddress as string, `Confirmation de votre commande ${orderNumber}`, emailTemplate);
+      }
+
+      if (customerPhone) {
+        const smsMessage = generateOrderConfirmationSMSMessage(orderNumber, tempPickupCode);
+        sendSMS(customerPhone, smsMessage);
+      }
+
       res.status(201).json(fullOrder);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Order creation failed" });
     }
   });
 
-  // ==================== PAYMENTS (MOCK) ====================
+  app.post("/api/orders/:id/resend-confirmation", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const order = await storage.getOrderById(req.params.id);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      if (order.userId && order.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+
+      const emailAddress = order.customerEmail || (req.user as any)?.email;
+      if (!emailAddress) {
+        return res.status(400).json({ error: "No email address available" });
+      }
+
+      const itemsForEmail = order.items.map(item => ({
+        productName: item.productName,
+        quantity: item.quantity,
+        price: parseFloat(item.productPrice),
+      }));
+
+      const emailTemplate = generateOrderConfirmationTemplate(
+        order.orderNumber,
+        order.customerName,
+        itemsForEmail,
+        parseFloat(order.amount),
+        order.tempPickupCode || "N/A",
+        order.pickupSlot.date,
+        `${order.pickupSlot.timeFrom} - ${order.pickupSlot.timeTo}`
+      );
+
+      const sent = await sendEmail(emailAddress as string, `Confirmation de votre commande ${order.orderNumber}`, emailTemplate);
+      if (sent) {
+        res.json({ message: "Confirmation email sent" });
+      } else {
+        res.status(500).json({ error: "Failed to send email" });
+      }
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   app.post("/api/payments/initiate", async (req: Request, res: Response) => {
     const { orderId, method } = req.body;
 
-    // Mock payment initiation
     res.json({
       paymentUrl: `https://mock-payment.geantcasino.cg/pay?order=${orderId}&method=${method}`,
       provider: method === "momo" ? "MTN Mobile Money" : "Visa/Mastercard",
     });
   });
 
-  // ==================== CONFIG ====================
-  app.get("/api/config/policy", async (req: Request, res: Response) => {
+  app.get("/api/config/policy", async (_req: Request, res: Response) => {
     res.json({
       expirationPolicy: "24h maximum pour produits périssables, 48h pour non périssables. Passé ce délai, commande annulée et remise en rayon, sans remboursement (commande expirée).",
       perishableExpiry: 24,

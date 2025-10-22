@@ -34,7 +34,6 @@ export function Header() {
     <header className="sticky top-0 z-50 bg-background border-b border-border">
       <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 gap-4">
-          {/* Logo */}
           <Link href="/" className="flex-shrink-0">
             <div className="flex items-center gap-2" data-testid="link-home">
               <div className="w-10 h-10 bg-primary rounded-md flex items-center justify-center">
@@ -47,7 +46,6 @@ export function Header() {
             </div>
           </Link>
 
-          {/* Navigation Links - Desktop */}
           <nav className="hidden md:flex items-center gap-6">
             <Link href="/" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
               Accueil
@@ -88,7 +86,6 @@ export function Header() {
             </Link>
           </nav>
 
-          {/* Search - Desktop */}
           <div className="hidden md:flex flex-1 max-w-xl relative">
             <form onSubmit={handleSearch} className="w-full">
               <div className="relative">
@@ -117,7 +114,6 @@ export function Header() {
             </form>
           </div>
 
-          {/* Actions Desktop */}
           <div className="hidden md:flex items-center gap-2">
             {isAuthenticated ? (
               <>
@@ -147,21 +143,35 @@ export function Header() {
                     </Badge>
                   )}
                 </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => navigate("/compte")}
-                  data-testid="button-account"
-                >
-                  <User className="h-5 w-5 mr-2" />
-                  <span className="hidden lg:inline">{user?.username}</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={logout}
-                  data-testid="button-logout"
-                >
-                  Déconnexion
-                </Button>
+                <div className="relative group">
+                  <Button
+                    variant="ghost"
+                    className="flex items-center gap-2"
+                    data-testid="button-account"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-bold">
+                      {user?.username?.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="hidden lg:inline text-sm">{user?.username}</span>
+                    <ChevronDown className="h-4 w-4 hidden lg:block" />
+                  </Button>
+                  <div className="absolute right-0 top-full mt-0 w-48 bg-background border border-border rounded-md shadow-lg z-50 py-1 hidden group-hover:block">
+                    <Link
+                      href="/compte"
+                      className="block w-full text-left px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    >
+                      <User className="h-4 w-4 inline mr-2" />
+                      Mon compte
+                    </Link>
+                    <button
+                      onClick={logout}
+                      className="w-full text-left px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors border-t border-border"
+                      data-testid="button-logout"
+                    >
+                      Déconnexion
+                    </button>
+                  </div>
+                </div>
               </>
             ) : (
               <>
@@ -199,7 +209,6 @@ export function Header() {
             )}
           </div>
 
-          {/* Mobile Menu Toggle */}
           <Button
             variant="ghost"
             size="icon"
@@ -211,7 +220,6 @@ export function Header() {
           </Button>
         </div>
 
-        {/* Mobile Search */}
         <div className="md:hidden pb-3">
           <form onSubmit={handleSearch}>
             <div className="relative">
@@ -241,11 +249,9 @@ export function Header() {
         </div>
       </div>
 
-      {/* Mobile Menu */}
       {mobileMenuOpen && (
         <div className="md:hidden border-t border-border bg-background">
           <div className="max-w-7xl mx-auto px-4 py-4 space-y-2">
-            {/* Navigation Links - Mobile */}
             <div className="border-b border-border pb-2 mb-2">
               <Button
                 variant="ghost"

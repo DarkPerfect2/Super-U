@@ -73,7 +73,7 @@ export function generatePasswordResetTemplate(resetLink: string, username: strin
             <p>Si vous n'avez pas demandé cette réinitialisation, ignorez cet email.</p>
           </div>
           <div class="footer">
-            <p>&copy; 2024 Géant Casino. Tous droits réservés.</p>
+            <p>&copy; 2025 Géant Casino. Tous droits réservés.</p>
           </div>
         </div>
       </body>
@@ -162,7 +162,7 @@ export function generateOrderConfirmationTemplate(
             <p>Votre paiement sera traité lors du retrait en magasin.</p>
           </div>
           <div class="footer">
-            <p>&copy; 2024 Géant Casino. Tous droits réservés.</p>
+            <p>&copy; 2025 Géant Casino. Tous droits réservés.</p>
           </div>
         </div>
       </body>
@@ -201,7 +201,7 @@ export function generateTwoFactorCodeTemplate(code: string, username: string): s
             <p>Si vous n'avez pas demandé ce code, ignorez cet email.</p>
           </div>
           <div class="footer">
-            <p>&copy; 2024 Géant Casino. Tous droits réservés.</p>
+            <p>&copy; 2025 Géant Casino. Tous droits réservés.</p>
           </div>
         </div>
       </body>

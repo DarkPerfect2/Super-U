@@ -11,6 +11,8 @@ import Products from "@/pages/products";
 import ProductDetail from "@/pages/product-detail";
 import Login from "@/pages/login";
 import Register from "@/pages/register";
+import ForgotPassword from "@/pages/forgot-password";
+import ResetPassword from "@/pages/reset-password";
 import Cart from "@/pages/cart";
 import Checkout from "@/pages/checkout";
 import Confirmation from "@/pages/confirmation";
@@ -28,6 +30,8 @@ function Router() {
       <Route path="/categories/:slug" component={Products} />
       <Route path="/connexion" component={Login} />
       <Route path="/inscription" component={Register} />
+      <Route path="/mot-de-passe-oublie" component={ForgotPassword} />
+      <Route path="/reset-password" component={ResetPassword} />
       <Route path="/panier" component={Cart} />
       <Route path="/checkout" component={Checkout} />
       <Route path="/confirmation/:id" component={Confirmation} />
@@ -43,9 +47,9 @@ function ScrollToTop() {
   const [location] = useLocation();
 
   useEffect(() => {
-    // Scroll to top when location changes
+    // Remonter en haut lors d’un changement de route
     window.scrollTo(0, 0);
-    // Save scroll position for back navigation
+    // Sauvegarder la position de défilement pour la navigation arrière
     sessionStorage.setItem(`scroll_${location}`, '0');
   }, [location]);
 

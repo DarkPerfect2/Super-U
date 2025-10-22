@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import cors, { type CorsOptions } from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { connectDatabase } from "./db";
@@ -6,6 +7,25 @@ import { connectDatabase } from "./db";
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Configuration CORS montée avant les routes
+const allowedOriginsEnv = (process.env.CORS_ALLOWED_ORIGINS || process.env.FRONTEND_URL || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const allowedOrigins = allowedOriginsEnv.length > 0 ? allowedOriginsEnv : ["http://localhost:3000"];
+const corsOptions: CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+app.options("*", cors(corsOptions));
+app.use(cors(corsOptions));
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -39,11 +59,11 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
-    // Initialize MongoDB connection
+    // Initialiser la connexion MongoDB
     await connectDatabase();
-    log('MongoDB database initialized');
+    log('Base de données MongoDB initialisée');
   } catch (error) {
-    log('Warning: MongoDB not available, using fallback. Ensure MONGODB_URI is set in .env');
+    log("Attention: MongoDB indisponible, stockage de secours utilisé. Vérifiez MONGODB_URI dans .env");
   }
 
   const server = await registerRoutes(app);
@@ -56,19 +76,25 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
+  // Important: n’activer Vite qu’en développement et après
+  // avoir monté les autres routes pour que la route catch-all
+  // ne perturbe pas les routes de l’API
+  const apiOnly = process.env.API_ONLY === "true";
+  const serveClient = process.env.SERVE_CLIENT !== "false";
+
+  if (!apiOnly) {
+    if (app.get("env") === "development") {
+      await setupVite(app, server);
+    } else {
+      if (serveClient) {
+        serveStatic(app);
+      }
+    }
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
+  // Toujours écouter sur le port défini par la variable d’environnement PORT
+  // Par défaut 5000. Les autres ports peuvent être filtrés par le pare-feu.
+  // Sert l’API (et le client uniquement si SERVE_CLIENT !== 'false').
   const port = parseInt(process.env.PORT || '5000', 10);
   server.listen({
     port,

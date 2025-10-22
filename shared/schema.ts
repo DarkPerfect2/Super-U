@@ -3,7 +3,6 @@ import { sqliteTable, text, integer, real, blob, index } from "drizzle-orm/sqlit
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// ==================== USERS ====================
 export const users = sqliteTable("users", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   username: text("username").notNull().unique(),
@@ -29,6 +28,11 @@ export const usersRelations = relations(users, ({ many }) => ({
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
+  updatedAt: true,
+  passwordResetToken: true,
+  passwordResetExpires: true,
+  twoFactorCode: true,
+  twoFactorExpires: true,
 });
 
 export const loginSchema = z.object({
@@ -40,7 +44,6 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type LoginInput = z.infer<typeof loginSchema>;
 
-// ==================== CATEGORIES ====================
 export const categories = sqliteTable("categories", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   name: text("name").notNull().unique(),
@@ -62,7 +65,6 @@ export const insertCategorySchema = createInsertSchema(categories).omit({
 export type InsertCategory = z.infer<typeof insertCategorySchema>;
 export type Category = typeof categories.$inferSelect;
 
-// ==================== PRODUCTS ====================
 export const products = sqliteTable("products", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   sku: text("sku").notNull().unique(),
@@ -104,7 +106,6 @@ export const insertProductSchema = createInsertSchema(products).omit({
 export type InsertProduct = z.infer<typeof insertProductSchema>;
 export type Product = typeof products.$inferSelect;
 
-// ==================== FAVORITES ====================
 export const favorites = sqliteTable("favorites", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId: text("user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
@@ -127,7 +128,6 @@ export const favoritesRelations = relations(favorites, ({ one }) => ({
 
 export type Favorite = typeof favorites.$inferSelect;
 
-// ==================== RATINGS ====================
 export const ratings = sqliteTable("ratings", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId: text("user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
@@ -161,7 +161,6 @@ export const insertRatingSchema = createInsertSchema(ratings).omit({
 export type InsertRating = z.infer<typeof insertRatingSchema>;
 export type Rating = typeof ratings.$inferSelect;
 
-// ==================== CART ====================
 export const cartItems = sqliteTable("cart_items", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId: text("user_id").references(() => users.id, { onDelete: 'cascade' }),
@@ -189,7 +188,6 @@ export const insertCartItemSchema = createInsertSchema(cartItems).omit({
 export type InsertCartItem = z.infer<typeof insertCartItemSchema>;
 export type CartItem = typeof cartItems.$inferSelect;
 
-// ==================== PICKUP SLOTS ====================
 export const pickupSlots = sqliteTable("pickup_slots", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   date: text("date").notNull(),
@@ -209,7 +207,6 @@ export const insertPickupSlotSchema = createInsertSchema(pickupSlots).omit({
 export type InsertPickupSlot = z.infer<typeof insertPickupSlotSchema>;
 export type PickupSlot = typeof pickupSlots.$inferSelect;
 
-// ==================== ORDERS ====================
 export const orders = sqliteTable("orders", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   orderNumber: text("order_number").notNull().unique(),
@@ -258,7 +255,6 @@ export const insertOrderSchema = createInsertSchema(orders).omit({
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Order = typeof orders.$inferSelect;
 
-// ==================== ORDER ITEMS ====================
 export const orderItems = sqliteTable("order_items", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   orderId: text("order_id").references(() => orders.id, { onDelete: 'cascade' }).notNull(),
@@ -284,20 +280,7 @@ export const orderItemsRelations = relations(orderItems, ({ one }) => ({
 
 export type OrderItem = typeof orderItems.$inferSelect;
 
-// ==================== API RESPONSE TYPES ====================
-export type ProductWithCategory = Product & {
-  category: Category;
-};
-
-export type CartItemWithProduct = CartItem & {
-  product: Product;
-};
-
-export type OrderWithDetails = Order & {
-  items: OrderItem[];
-  pickupSlot: PickupSlot;
-};
-
-export type RatingWithUser = Rating & {
-  user: Pick<User, 'id' | 'username'>;
-};
+export type ProductWithCategory = Product & { category: Category };
+export type CartItemWithProduct = CartItem & { product: Product };
+export type OrderWithDetails = Order & { items: OrderItem[]; pickupSlot: PickupSlot };
+export type RatingWithUser = Rating & { user: Pick<User, 'id' | 'username'> };

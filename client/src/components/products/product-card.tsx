@@ -3,6 +3,7 @@ import { ShoppingCart, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { ProductImage } from "@/components/ui/product-image";
 import { useCartStore } from "@/stores/cart-store";
 import { useToast } from "@/hooks/use-toast";
 import type { Product } from "@shared/schema";
@@ -51,14 +52,12 @@ export function ProductCard({ product }: ProductCardProps) {
   return (
     <Link href={`/produits/${product.id}`}>
       <Card className="overflow-hidden hover-elevate active-elevate-2 cursor-pointer group h-full flex flex-col" data-testid={`product-card-${product.id}`}>
-        <div className="aspect-square relative overflow-hidden bg-muted">
-          <img
+        <div className="aspect-square relative overflow-hidden bg-muted group-hover:scale-105 transition-transform duration-300">
+          <ProductImage
             src={images[0] || "/placeholder-product.png"}
             alt={product.name}
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+            className="w-full h-full"
           />
-          
-          {/* Stock Badge */}
           {!inStock && (
             <Badge variant="destructive" className="absolute top-2 left-2">
               Rupture
@@ -69,8 +68,6 @@ export function ProductCard({ product }: ProductCardProps) {
               Stock limité
             </Badge>
           )}
-
-          {/* Favorite Button */}
           <Button
             variant="ghost"
             size="icon"
@@ -89,7 +86,6 @@ export function ProductCard({ product }: ProductCardProps) {
           <h3 className="font-medium text-foreground mb-2 line-clamp-2 flex-1" data-testid={`text-product-name-${product.id}`}>
             {product.name}
           </h3>
-          
           <div className="flex items-center gap-1 mb-2">
             {[...Array(5)].map((_, i) => (
               <svg
@@ -114,7 +110,6 @@ export function ProductCard({ product }: ProductCardProps) {
                 <p className="text-xs text-chart-3">Plus que {product.stock} restants</p>
               )}
             </div>
-            
             <Button
               size="icon"
               disabled={!inStock}

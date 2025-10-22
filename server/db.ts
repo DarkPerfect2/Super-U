@@ -2,39 +2,48 @@ import { MongoClient, Db, Collection } from 'mongodb';
 
 let client: MongoClient | null = null;
 let db: Db | null = null;
+let mongoAvailable = false;
 
-const getDatabaseUrl = (): string => {
+const getDatabaseUrl = (): string | null => {
   const mongoUri = process.env.MONGODB_URI;
-  if (!mongoUri) {
-    throw new Error('MONGODB_URI environment variable is not set. Please configure MongoDB Atlas connection string in your .env file.');
-  }
-  return mongoUri;
+  return mongoUri || null;
 };
 
-export async function connectDatabase(): Promise<Db> {
+export async function connectDatabase(): Promise<Db | null> {
   if (db) {
     return db;
   }
 
   const mongoUri = getDatabaseUrl();
+  if (!mongoUri) {
+    console.warn('⚠️ MongoDB URI not configured. Database features will be disabled.');
+    mongoAvailable = false;
+    return null;
+  }
+
   client = new MongoClient(mongoUri);
-  
+
   try {
     await client.connect();
-    console.log('Connected to MongoDB Atlas');
+    console.log('✅ Connected to MongoDB Atlas');
     db = client.db(process.env.MONGODB_DB_NAME || 'giantcasino');
+    mongoAvailable = true;
     return db;
   } catch (error) {
-    console.error('Failed to connect to MongoDB:', error);
-    throw error;
+    console.error('❌ Failed to connect to MongoDB:', error);
+    mongoAvailable = false;
+    return null;
   }
 }
 
-export async function getDatabase(): Promise<Db> {
+export async function getDatabase(): Promise<Db | null> {
+  if (!db && mongoAvailable === false) {
+    return null;
+  }
   if (!db) {
     await connectDatabase();
   }
-  return db!;
+  return db;
 }
 
 export async function closeDatabase(): Promise<void> {
@@ -47,6 +56,9 @@ export async function closeDatabase(): Promise<void> {
 
 export async function getCollections() {
   const database = await getDatabase();
+  if (!database) {
+    throw new Error('MongoDB is not available. Please configure MONGODB_URI in .env');
+  }
   return {
     users: database.collection('users'),
     categories: database.collection('categories'),

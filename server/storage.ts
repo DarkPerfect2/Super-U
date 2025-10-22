@@ -98,17 +98,29 @@ export class DatabaseStorage implements IStorage {
     return this.formatUser({ _id: result.insertedId, ...doc });
   }
 
-  async updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined> {
+  async updateUser(id: string, data: Partial<InsertUser> & { passwordResetToken?: string; passwordResetExpires?: string; twoFactorCode?: string; twoFactorExpires?: string }): Promise<User | undefined> {
     const { users } = await getCollections();
+    const updateData = { ...data };
+
+    (updateData as any).updatedAt = new Date().toISOString();
+
     const result = await users.findOneAndUpdate(
       { _id: new ObjectId(id) },
-      { $set: data },
+      { $set: updateData },
       { returnDocument: 'after' }
     );
     return result.value ? this.formatUser(result.value) : undefined;
   }
 
-  // Categories
+  async getUserByPasswordResetToken(token: string): Promise<User | undefined> {
+    const { users } = await getCollections();
+    const user = await users.findOne({
+      passwordResetToken: token,
+      passwordResetExpires: { $gt: new Date().toISOString() },
+    });
+    return user ? this.formatUser(user) : undefined;
+  }
+
   async getCategories(): Promise<Category[]> {
     const { categories } = await getCollections();
     const cats = await categories.find({}).sort({ name: 1 }).toArray();
@@ -137,7 +149,6 @@ export class DatabaseStorage implements IStorage {
     return this.formatCategory({ _id: result.insertedId, ...doc });
   }
 
-  // Products
   async getProducts(filters: {
     search?: string;
     categoryId?: string;
@@ -217,7 +228,6 @@ export class DatabaseStorage implements IStorage {
     const result = await products.insertOne(doc as any);
     const formatted = this.formatProduct({ _id: result.insertedId, ...doc });
 
-    // Update category product count
     if (product.categoryId) {
       await categories.updateOne(
         { _id: new ObjectId(product.categoryId) },
@@ -251,7 +261,6 @@ export class DatabaseStorage implements IStorage {
     );
   }
 
-  // Favorites
   async getUserFavorites(userId: string): Promise<(Favorite & { product: Product })[]> {
     const { favorites, products } = await getCollections();
     const favs = await favorites.find({ userId }).toArray();
@@ -285,7 +294,6 @@ export class DatabaseStorage implements IStorage {
     await favorites.deleteOne({ userId, productId });
   }
 
-  // Ratings
   async getProductRatings(productId: string, page: number = 1): Promise<{ results: (Rating & { user: Pick<User, 'id' | 'username'> })[], count: number }> {
     const { ratings, users } = await getCollections();
     const pageSize = 10;
@@ -322,13 +330,11 @@ export class DatabaseStorage implements IStorage {
     };
     const result = await ratings.insertOne(doc as any);
 
-    // Update product rating
     await this.updateProductRating(rating.productId);
 
     return this.formatRating({ _id: result.insertedId, ...doc });
   }
 
-  // Cart
   async getUserCart(userId: string): Promise<(CartItem & { product: Product })[]> {
     const { cartItems, products } = await getCollections();
     const items = await cartItems.find({ userId }).toArray();
@@ -388,7 +394,6 @@ export class DatabaseStorage implements IStorage {
     await cartItems.deleteOne({ _id: new ObjectId(id) });
   }
 
-  // Pickup Slots
   async getPickupSlots(date?: string): Promise<PickupSlot[]> {
     const { pickupSlots } = await getCollections();
     const query: any = { isActive: true };
@@ -421,7 +426,6 @@ export class DatabaseStorage implements IStorage {
     );
   }
 
-  // Orders
   async getOrders(userId?: string): Promise<Order[]> {
     const { orders } = await getCollections();
     const query = userId ? { userId } : {};
@@ -458,7 +462,6 @@ export class DatabaseStorage implements IStorage {
     const result = await orders.insertOne(orderDoc as any);
     const orderId = result.insertedId.toString();
 
-    // Insert order items
     if (items.length > 0) {
       await orderItems.insertMany(
         items.map(item => ({
@@ -483,14 +486,19 @@ export class DatabaseStorage implements IStorage {
     );
   }
 
-  // Helper formatting methods
   private formatUser(doc: any): User {
     return {
       id: doc._id.toString(),
       username: doc.username,
       email: doc.email,
       password: doc.password,
+      phone: doc.phone,
+      passwordResetToken: doc.passwordResetToken,
+      passwordResetExpires: doc.passwordResetExpires,
+      twoFactorCode: doc.twoFactorCode,
+      twoFactorExpires: doc.twoFactorExpires,
       createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
     };
   }
 

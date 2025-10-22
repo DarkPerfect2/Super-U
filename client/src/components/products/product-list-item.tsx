@@ -3,6 +3,7 @@ import { ShoppingCart, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { ProductImage } from "@/components/ui/product-image";
 import { useCartStore } from "@/stores/cart-store";
 import { useToast } from "@/hooks/use-toast";
 import type { Product } from "@shared/schema";
@@ -53,10 +54,10 @@ export function ProductListItem({ product }: ProductListItemProps) {
       <Card className="overflow-hidden hover-elevate active-elevate-2 cursor-pointer" data-testid={`product-list-${product.id}`}>
         <CardContent className="p-4 flex gap-4">
           <div className="w-32 h-32 flex-shrink-0 relative overflow-hidden bg-muted rounded-lg">
-            <img
+            <ProductImage
               src={images[0] || "/placeholder-product.png"}
               alt={product.name}
-              className="w-full h-full object-cover"
+              className="w-full h-full"
             />
             {!inStock && (
               <Badge variant="destructive" className="absolute top-2 left-2">
