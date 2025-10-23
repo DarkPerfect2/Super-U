@@ -6,17 +6,18 @@ import { storage as mongoStorage, IStorage } from "./storage";
 import { FallbackStorage } from "./storage-fallback";
 import {
   generateAccessToken,
-  generateRefreshToken,
-  verifyToken,
   authMiddleware,
   optionalAuthMiddleware,
   type AuthRequest,
 } from "./middleware/auth";
+import { issueInitialRefreshToken, rotateRefreshToken } from "./auth/refresh-tokens";
 import { insertUserSchema, insertRatingSchema, loginSchema } from "@shared/schema";
 import { sendEmail, generatePasswordResetTemplate, generateOrderConfirmationTemplate, generateTwoFactorCodeTemplate, initializeEmailService } from "./services/email";
 import { sendSMS, generatePasswordResetSMSMessage, generateTwoFactorSMSMessage, generateOrderConfirmationSMSMessage, initializeSMSService } from "./services/sms";
 import { initializeCloudinaryService, getCloudinarySignature } from "./services/cloudinary";
 import { getCollections, getDatabase } from "./db";
+import { lygosInitiateMomoPayment, verifyLygosSignature } from "./services/lygos";
+import { logger } from "./logger";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   initializeEmailService();
@@ -81,7 +82,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const accessToken = generateAccessToken(user.id);
-      const refreshToken = generateRefreshToken(user.id);
+      const { token: refreshToken } = await issueInitialRefreshToken(user.id);
 
       const { password: _, ...userWithoutPassword } = user as any;
 
@@ -103,16 +104,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Refresh token required" });
       }
 
-      const { userId, type } = verifyToken(refresh);
-
-      if (type !== "refresh") {
-        return res.status(401).json({ error: "Invalid token type" });
-      }
-
+      const { newToken, userId } = await rotateRefreshToken(refresh);
       const accessToken = generateAccessToken(userId);
-      res.json({ access: accessToken });
+      res.json({ access: accessToken, refresh: newToken });
     } catch (error: any) {
-      res.status(401).json({ error: error.message || "Token refresh failed" });
+      const status = error?.status || 401;
+      res.status(status).json({ error: error.message || "Token refresh failed" });
     }
   });
 
@@ -512,7 +509,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           currency: "XAF",
           paymentMethod,
           notes,
-          status: "paid",
+          status: "pending_payment",
           tempPickupCode,
           expiresAt,
         } as any,
@@ -525,34 +522,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const fullOrder = await storage.getOrderById(order.id);
-
-      if (customerEmail || (req.user as any)?.email) {
-        const emailAddress = customerEmail || (req.user as any)?.email;
-        const itemsForEmail = orderItems.map(item => ({
-          productName: item.productName,
-          quantity: item.quantity,
-          price: parseFloat(item.productPrice),
-        }));
-        const pickupDateStr = (slot as any)?.date || new Date().toISOString().split('T')[0];
-        const pickupTimeStr = (slot as any)?.timeFrom ? `${(slot as any).timeFrom} - ${(slot as any).timeTo}` : "À définir";
-
-        const emailTemplate = generateOrderConfirmationTemplate(
-          orderNumber,
-          customerName,
-          itemsForEmail,
-          totalAmount,
-          tempPickupCode,
-          pickupDateStr,
-          pickupTimeStr
-        );
-
-        sendEmail(emailAddress as string, `Confirmation de votre commande ${orderNumber}`, emailTemplate);
-      }
-
-      if (customerPhone) {
-        const smsMessage = generateOrderConfirmationSMSMessage(orderNumber, tempPickupCode);
-        sendSMS(customerPhone, smsMessage);
-      }
 
       res.status(201).json(fullOrder);
     } catch (error: any) {
@@ -604,12 +573,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/payments/initiate", async (req: Request, res: Response) => {
-    const { orderId, method } = req.body;
+    try {
+      const { orderId, method } = req.body;
+      if (!orderId || !method) return res.status(400).json({ error: "Missing fields" });
+      const order = await storage.getOrderById(orderId);
+      if (!order) return res.status(404).json({ error: "Order not found" });
 
-    res.json({
-      paymentUrl: `https://mock-payment.geantcasino.cg/pay?order=${orderId}&method=${method}`,
-      provider: method === "momo" ? "MTN Mobile Money" : "Visa/Mastercard",
-    });
+      if (method === "momo") {
+        const result = await lygosInitiateMomoPayment({
+          orderId: order.id,
+          amount: parseFloat(order.amount),
+          currency: order.currency,
+          customerPhone: order.customerPhone,
+        });
+        return res.json({ paymentUrl: result.paymentUrl, provider: result.provider, transactionId: result.transactionId });
+      }
+
+      res.status(400).json({ error: "Unsupported method" });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message || "Payment initiation failed" });
+    }
+  });
+
+  // Simple per-IP rate limiter for webhook (max 20/min)
+  const webhookHits = new Map<string, number[]>();
+  function checkRateLimit(ip: string): boolean {
+    const now = Date.now();
+    const windowMs = 60_000;
+    const max = 20;
+    const arr = webhookHits.get(ip) || [];
+    const fresh = arr.filter((t) => now - t < windowMs);
+    fresh.push(now);
+    webhookHits.set(ip, fresh);
+    return fresh.length <= max;
+  }
+
+  app.post("/api/payments/lygos/webhook", async (req: Request, res: Response) => {
+    try {
+      const ip = req.ip || (req.headers["x-forwarded-for"] as string) || "unknown";
+      if (!checkRateLimit(ip)) {
+        logger.warn({ ip }, "Webhook rate limit exceeded");
+        return res.status(429).json({ error: "Too Many Requests" });
+      }
+
+      const raw = (req as any).rawBody || JSON.stringify(req.body || {});
+      const signature = (req.headers["x-lygos-signature"] as string) || (req.headers["x-lygos-signature-sha256"] as string);
+      const ok = verifyLygosSignature(raw, signature);
+      if (!ok) {
+        logger.warn({ ip }, "Invalid Lygos signature");
+        return res.status(401).json({ error: "Invalid signature" });
+      }
+
+      const event = req.body as any;
+      const reference = event?.reference || event?.metadata?.orderId;
+      const status = event?.status;
+      if (!reference || !status) return res.status(400).json({ error: "Invalid payload" });
+
+      logger.info({ reference, status }, "Lygos webhook received");
+
+      if (status === "success" || status === "paid") {
+        await storage.updateOrderStatus(reference, "paid");
+        const order = await storage.getOrderById(reference);
+        if (order) {
+          if (order.customerEmail) {
+            const itemsForEmail = order.items.map(item => ({
+              productName: item.productName,
+              quantity: item.quantity,
+              price: parseFloat(item.productPrice),
+            }));
+            const pickupDateStr = order.pickupSlot?.date || new Date().toISOString().split('T')[0];
+            const pickupTimeStr = order.pickupSlot?.timeFrom ? `${order.pickupSlot.timeFrom} - ${order.pickupSlot.timeTo}` : "À définir";
+            const emailTemplate = generateOrderConfirmationTemplate(
+              order.orderNumber,
+              order.customerName,
+              itemsForEmail,
+              parseFloat(order.amount),
+              order.tempPickupCode || "N/A",
+              pickupDateStr,
+              pickupTimeStr
+            );
+            sendEmail(order.customerEmail, `Confirmation de votre commande ${order.orderNumber}`, emailTemplate);
+          }
+          if (order.customerPhone) {
+            const smsMessage = generateOrderConfirmationSMSMessage(order.orderNumber, order.tempPickupCode || "N/A");
+            sendSMS(order.customerPhone, smsMessage);
+          }
+        }
+      } else if (status === "failed" || status === "canceled") {
+        await storage.updateOrderStatus(reference, "canceled");
+      }
+
+      res.json({ received: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message || "Webhook handling failed" });
+    }
   });
 
   app.get("/api/config/policy", async (_req: Request, res: Response) => {

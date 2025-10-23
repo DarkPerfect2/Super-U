@@ -69,6 +69,12 @@ FRONTEND_URL=http://localhost:3000
 # (facultatif) CORS_ALLOWED_ORIGINS=https://shop.example.com,https://admin.example.com
 API_ONLY=true
 SERVE_CLIENT=false
+# Auth/refresh tokens
+JWT_SECRET=change-me
+REFRESH_TOKEN_EXPIRY=7d
+# Logs
+LOG_LEVEL=warn
+DEV_PRETTY_LOGS=true
 ```
 
 - Frontend (client/.env.development):

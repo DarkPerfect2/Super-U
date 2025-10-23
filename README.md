@@ -41,6 +41,10 @@ API_ONLY=true
 SERVE_CLIENT=false
 COOKIE_DOMAIN=.example.com
 JWT_SECRET=change-me
+REFRESH_TOKEN_EXPIRY=7d
+# Logs
+LOG_LEVEL=warn
+DEV_PRETTY_LOGS=true
 
 MONGODB_URI=...
 MONGODB_DB_NAME=giantcasino
@@ -72,7 +76,8 @@ npm run dev:client  # Front: http://localhost:3000
 - 2FA: `POST /api/auth/request-2fa`, `POST /api/auth/verify-2fa`
 - Catalogue: `GET /api/categories`, `GET /api/products`, `GET /api/products/:id`
 - Panier: `GET /api/cart`
-- Commandes: `POST /api/orders`, `GET /api/orders`, `GET /api/orders/:id`, `POST /api/orders/:id/resend-confirmation`
+- Commandes: `POST /api/orders` (pending_payment), `GET /api/orders`, `GET /api/orders/:id`, `POST /api/orders/:id/resend-confirmation`
+- Paiement: `POST /api/payments/initiate` (Lygos MoMo), `POST /api/payments/lygos/webhook`
 - Upload Cloudinary: `GET /api/upload/cloudinary-signature`
 
 ## 📚 Documentation
@@ -81,6 +86,27 @@ npm run dev:client  # Front: http://localhost:3000
 - `IMPLEMENTATION_GUIDE.md` – Guide détaillé
 - `RESUME_IMPLEMENTATION_FR.md` – Résumé
 - `CHANGELOG_IMPLEMENTATION.md` – Journal des changements
+
+## 🔁 Politique des refresh tokens
+- Rotation en cas d'utilisation: un nouveau refresh token est émis et l'ancien est révoqué.
+- Réutilisation d’un refresh révoqué: tous les tokens de la même famille sont révoqués et l’API renvoie 401.
+- Durée par défaut: `REFRESH_TOKEN_EXPIRY=7d` (modifiable via l'environnement). 
+
+## 💳 Flux de paiement (Lygos – MTN MoMo CG)
+- Création commande: `status = pending_payment`
+- `POST /api/payments/initiate` → reçoit `paymentUrl`/`transactionId`
+- Lygos appelle `POST /api/payments/lygos/webhook` avec signature HMAC (header `X-Lygos-Signature`)
+  - `paid/success` → commande `paid` + envoi email/SMS
+  - `failed/canceled` → commande `canceled`
+- Sécurité: HMAC SHA-256 avec `LYGOS_WEBHOOK_SECRET`, rate limit 20/min/IP
+
+## 🖥️ Écran de retour paiement (Front)
+- Redirection vers `/confirmation?orderId=<id>`
+- La page lit `orderId`, appelle `/api/orders/:id` et affiche le statut (`paid/pending_payment/canceled`).
+
+## 🪵 Journaux (logs)
+- En production: `LOG_LEVEL=warn` par défaut pour limiter le bruit.
+- En développement: activer des logs lisibles avec `DEV_PRETTY_LOGS=true` (pino-pretty).
 
 ## 🔐 Sécurité
 - Ne commitez pas `.env` avec des secrets

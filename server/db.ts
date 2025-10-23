@@ -37,9 +37,6 @@ export async function connectDatabase(): Promise<Db | null> {
 }
 
 export async function getDatabase(): Promise<Db | null> {
-  if (!db && mongoAvailable === false) {
-    return null;
-  }
   if (!db) {
     await connectDatabase();
   }
@@ -69,7 +66,8 @@ export async function getCollections() {
     pickupSlots: database.collection('pickup_slots'),
     orders: database.collection('orders'),
     orderItems: database.collection('order_items'),
-  };
+    refreshTokens: database.collection('refresh_tokens'),
+  } as const;
 }
 
 // For compatibility with old drizzle setup - this is a fallback

@@ -70,9 +70,14 @@ app.use(httpLogger);
   // Toujours écouter sur le port défini par la variable d’environnement PORT
   // Par défaut 5000. Les autres ports peuvent être filtrés par le pare-feu.
   // Sert l’API (et le client uniquement si SERVE_CLIENT !== 'false').
-  const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen(port, "127.0.0.1", () => {
-  logger.info({ port }, "HTTP server listening");
+  const host = process.platform === "win32" ? "localhost" : "0.0.0.0";
+
+server.listen({
+  port,
+  host,
+  reusePort: true,
+}, () => {
+  logger.info({ port, host }, "HTTP server listening");
 });
 
 })();

@@ -1,10 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { storage } from "../storage";
+import { JWT_SECRET } from "../config";
 
-const JWT_SECRET = process.env.JWT_SECRET || "geant-casino-secret-key-2024";
 const ACCESS_TOKEN_EXPIRY = "15m";
-const REFRESH_TOKEN_EXPIRY = "7d";
 
 export interface AuthRequest extends Request {
   user?: {
@@ -20,15 +19,10 @@ export function generateAccessToken(userId: string): string {
   });
 }
 
-export function generateRefreshToken(userId: string): string {
-  return jwt.sign({ userId, type: "refresh" }, JWT_SECRET, {
-    expiresIn: REFRESH_TOKEN_EXPIRY,
-  });
-}
 
-export function verifyToken(token: string): { userId: string; type: string } {
+export function verifyToken(token: string): { userId: string; type: string; jti?: string; familyId?: string } {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; type: string };
+    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; type: string; jti?: string; familyId?: string };
     return decoded;
   } catch (error) {
     throw new Error("Invalid or expired token");

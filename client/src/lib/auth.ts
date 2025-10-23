@@ -30,3 +30,40 @@ export const authStorage = {
 export const isAuthenticated = (): boolean => {
   return !!authStorage.getAccessToken();
 };
+
+const API_BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
+function toApiUrl(pathOrUrl: string): string {
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  const path = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+  return `${API_BASE}${path}`;
+}
+
+let ongoingRefresh: Promise<boolean> | null = null;
+
+export async function refreshTokens(): Promise<boolean> {
+  if (ongoingRefresh) {
+    return ongoingRefresh;
+  }
+  const refresh = authStorage.getRefreshToken();
+  if (!refresh) return false;
+  ongoingRefresh = (async () => {
+    try {
+      const res = await fetch(toApiUrl("/api/auth/refresh"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh }),
+        credentials: "include",
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (data?.access) authStorage.setAccessToken(data.access);
+      if (data?.refresh) authStorage.setRefreshToken(data.refresh);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      ongoingRefresh = null;
+    }
+  })();
+  return ongoingRefresh;
+}

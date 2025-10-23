@@ -1,5 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
-import { authStorage } from "./auth";
+import { authStorage, refreshTokens } from "./auth";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -33,12 +33,24 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<any> {
-  const res = await fetch(toApiUrl(url), {
+  let res = await fetch(toApiUrl(url), {
     method,
     headers: getAuthHeaders(),
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
+
+  if (res.status === 401) {
+    const refreshed = await refreshTokens();
+    if (refreshed) {
+      res = await fetch(toApiUrl(url), {
+        method,
+        headers: getAuthHeaders(),
+        body: data ? JSON.stringify(data) : undefined,
+        credentials: "include",
+      });
+    }
+  }
 
   await throwIfResNotOk(res);
   
@@ -62,13 +74,24 @@ export const getQueryFn: <T>(options: {
       headers["Authorization"] = `Bearer ${token}`;
     }
     
-    const res = await fetch(toApiUrl(queryKey.join("/") as string), {
+    let res = await fetch(toApiUrl(queryKey.join("/") as string), {
       headers,
       credentials: "include",
     });
 
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
+    if (res.status === 401) {
+      const refreshed = await refreshTokens();
+      if (refreshed) {
+        const retryHeaders: HeadersInit = {};
+        const newToken = authStorage.getAccessToken();
+        if (newToken) retryHeaders["Authorization"] = `Bearer ${newToken}`;
+        res = await fetch(toApiUrl(queryKey.join("/") as string), {
+          headers: retryHeaders,
+          credentials: "include",
+        });
+      } else if (unauthorizedBehavior === "returnNull") {
+        return null;
+      }
     }
 
     await throwIfResNotOk(res);
